@@ -1,0 +1,27 @@
+1 SET
+
+  Defines or changes the current process environment.
+
+2 DEFAULT
+
+  Changes the default directory.
+
+2 PROMPT
+
+  Changes the DCL prompt string.
+
+2 /LOG
+
+  Enables logging of commands.
+
+1 SHOW
+
+  Displays information about the current process.
+
+2 DEFAULT
+
+  Displays the current default directory.
+
+2 /FULL
+
+  Displays complete information.

@@ -1,0 +1,11 @@
+1 ALPHA
+
+  Topic from file A.
+
+2 DETAILS
+
+  Details for ALPHA.
+
+1 SHARED
+
+  SHARED topic from file A (will be overridden by file B).

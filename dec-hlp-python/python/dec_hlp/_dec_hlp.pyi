@@ -1,0 +1,89 @@
+from typing import Optional
+
+class Topic:
+    """A resolved topic from a help library."""
+
+    @property
+    def name(self) -> str: ...
+    @property
+    def body(self) -> str: ...
+    @property
+    def children(self) -> list[str]: ...
+    @property
+    def level(self) -> int: ...
+    def __repr__(self) -> str: ...
+    def __str__(self) -> str: ...
+
+class NavResult:
+    """Result of a navigator input action."""
+
+    @property
+    def action(self) -> str:
+        """One of: 'display_topic', 'display_multiple', 'ambiguous',
+        'not_found', 'show_topics', 'go_up', 'exit'."""
+        ...
+    @property
+    def topic(self) -> Optional[Topic]: ...
+    @property
+    def topics(self) -> Optional[list[Topic]]: ...
+    @property
+    def candidates(self) -> Optional[list[str]]: ...
+    @property
+    def available(self) -> Optional[list[str]]: ...
+    @property
+    def names(self) -> Optional[list[str]]: ...
+
+class Library:
+    """A compiled .hlib help library."""
+
+    def __init__(self, path: str) -> None:
+        """Open a .hlib file from disk."""
+        ...
+    @staticmethod
+    def from_bytes(data: bytes) -> "Library":
+        """Create a library from raw bytes."""
+        ...
+    @property
+    def node_count(self) -> int: ...
+    @property
+    def build_timestamp(self) -> int: ...
+    def root_topics(self) -> list[str]:
+        """Return the names of all level-1 (root) topics."""
+        ...
+    def lookup(self, path: list[str], exact: bool = False) -> Optional[Topic]:
+        """Look up a topic by path. Returns None if not found or ambiguous."""
+        ...
+    def children(self, path: list[str] = [], exact: bool = False) -> list[str]:
+        """Return child topic names at the given path."""
+        ...
+
+class Navigator:
+    """Interactive help navigator."""
+
+    def __init__(self, library: Library) -> None:
+        """Create a navigator for the given library."""
+        ...
+    @property
+    def depth(self) -> int:
+        """Current depth in the topic tree (0 = root)."""
+        ...
+    def prompt(self) -> str:
+        """Return the prompt string for the current position."""
+        ...
+    def input(self, line: str, exact: bool = False) -> NavResult:
+        """Process a line of user input."""
+        ...
+    def go_up(self) -> bool:
+        """Go up one level. Returns True if successful, False if at root."""
+        ...
+    def reset(self) -> None:
+        """Reset to the root level."""
+        ...
+
+def build(inputs: list[str], output: str, verbose: bool = False) -> None:
+    """Compile .hlp source files into a .hlib binary library."""
+    ...
+
+def version() -> str:
+    """Return the version string for dec-hlp."""
+    ...

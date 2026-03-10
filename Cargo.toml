@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "dec-hlp",
+    "dec-hlp-ffi",
+    "dec-hlp-python",
+    "hlp",
+]
+resolver = "3"

@@ -1,0 +1,14 @@
+[package]
+name = "dec-hlp-ffi"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85.0"
+license = "MIT"
+description = "C-compatible FFI bindings for the dec-hlp VMS help library"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+dec-hlp = { path = "../dec-hlp" }

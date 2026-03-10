@@ -1,0 +1,31 @@
+[package]
+name = "dec-hlp"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85.0"
+description = "A Linux reimplementation of the VMS HELP utility library"
+license = "MIT"
+keywords = ["vms", "help", "hlb", "dec", "cli"]
+categories = ["command-line-utilities", "parser-implementations"]
+
+[dependencies]
+memmap2 = { version = "0.9", optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+default = ["mmap"]
+mmap = ["dep:memmap2"]
+
+[[example]]
+name = "list_topics"
+path = "../examples/rust/list_topics.rs"
+
+[[example]]
+name = "build_library"
+path = "../examples/rust/build_library.rs"
+
+[[example]]
+name = "lookup_topic"
+path = "../examples/rust/lookup_topic.rs"

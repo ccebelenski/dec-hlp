@@ -1,0 +1,11 @@
+/target
+*.swp
+*.swo
+*~
+.DS_Store
+*.hlib
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+.venv/

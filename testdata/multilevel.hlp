@@ -1,0 +1,29 @@
+1 COPY
+
+  Creates a copy of a file.
+
+2 /CONFIRM
+
+  Displays the file specification of each file before copying.
+
+3 Examples
+
+  Example of using /CONFIRM:
+
+    $ COPY/CONFIRM *.TXT [.BACKUP]
+
+2 /LOG
+
+  Displays the file specification of each file as it is copied.
+
+1 DELETE
+
+  Deletes one or more files.
+
+2 /CONFIRM
+
+  Displays the file specification before deleting.
+
+2 /LOG
+
+  Displays the file specification of each file as it is deleted.

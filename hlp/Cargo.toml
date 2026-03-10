@@ -1,0 +1,20 @@
+[package]
+name = "hlp"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85.0"
+description = "VMS HELP utility for Linux"
+license = "MIT"
+
+[[bin]]
+name = "hlp"
+path = "src/main.rs"
+
+[dependencies]
+dec-hlp = { path = "../dec-hlp" }
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"

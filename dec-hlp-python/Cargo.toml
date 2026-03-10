@@ -1,0 +1,16 @@
+[package]
+name = "dec-hlp-python"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85.0"
+license = "MIT"
+description = "Python bindings for the dec-hlp VMS help library"
+publish = false
+
+[lib]
+name = "_dec_hlp"
+crate-type = ["cdylib"]
+
+[dependencies]
+dec-hlp = { path = "../dec-hlp" }
+pyo3 = { version = "0.25", features = ["extension-module"] }

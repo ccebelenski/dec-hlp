@@ -1,0 +1,15 @@
+1 BETA
+
+  Topic from file B.
+
+2 DETAILS
+
+  Details for BETA.
+
+1 SHARED
+
+  SHARED topic from file B (this wins).
+
+2 EXTRA
+
+  Subtopic only in file B's version of SHARED.

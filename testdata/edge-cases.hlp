@@ -1,0 +1,50 @@
+1 EMPTY_TOPIC
+
+1 CONTAINER
+
+2 CHILD_A
+
+  Text for child A.
+
+2 CHILD_B
+
+  Text for child B.
+
+1 BODY_PRESERVATION
+
+  This body has leading spaces:
+    indented line
+	tab-indented line
+
+  Blank line above and below.
+
+  Trailing spaces preserved.
+
+1 AMBIGUOUS_LINES
+
+  The following lines are body text, not headers:
+  10 items in the list
+  0 SOMETHING
+  1
+  1
+  255 values
+
+1 ABCDEFGHIJKLMNOPQRSTUVWXYZ12345
+
+  This topic name is exactly 31 characters.
+
+1 Multi Word Name
+
+  Topic names can contain spaces.
+
+1 DUPLICATE
+
+  First definition.
+
+1 DUPLICATE
+
+  Second definition (this one wins).
+
+1 SYS$SPECIAL_NAME
+
+  Names with dollar signs and underscores.

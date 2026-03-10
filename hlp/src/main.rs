@@ -208,7 +208,7 @@ fn run_browse(cli: &Cli) -> i32 {
         match lib_set.resolve(&path_refs, match_mode) {
             engine::ResolveResult::Found(node) => {
                 if !no_pager {
-                    let text = format_topic_output(&node, &lib_set);
+                    let text = format_topic_output(&node);
                     page_output(&text, cli);
                 } else {
                     write_topic_output(&mut output, &node);
@@ -224,7 +224,10 @@ fn run_browse(cli: &Cli) -> i32 {
                 input, candidates, ..
             } => {
                 eprintln!();
-                eprintln!("  Sorry, topic {} is ambiguous.  The choices are:", input.to_ascii_uppercase());
+                eprintln!(
+                    "  Sorry, topic {} is ambiguous.  The choices are:",
+                    input.to_ascii_uppercase()
+                );
                 eprintln!();
                 let names: Vec<&str> = candidates.iter().map(|s| s.as_str()).collect();
                 eprint!("  {}", engine::format_columns(&names, 76));
@@ -236,20 +239,27 @@ fn run_browse(cli: &Cli) -> i32 {
                 return run_interactive(cli, &lib_set, None, match_mode, no_pager, &mut seen);
             }
             engine::ResolveResult::NotFoundAt {
-                depth, input, available, ..
+                depth,
+                input,
+                available,
+                ..
             } => {
                 // Man page fallback: only at root level (depth 0), single topic
-                if depth == 0 && path_refs.len() == 1 {
-                    if try_man_fallback(&input, no_pager, &mut seen) {
-                        if no_prompt {
-                            return EXIT_SUCCESS;
-                        }
-                        return run_interactive(cli, &lib_set, None, match_mode, no_pager, &mut seen);
+                if depth == 0
+                    && path_refs.len() == 1
+                    && try_man_fallback(&input, no_pager, &mut seen)
+                {
+                    if no_prompt {
+                        return EXIT_SUCCESS;
                     }
+                    return run_interactive(cli, &lib_set, None, match_mode, no_pager, &mut seen);
                 }
 
                 eprintln!();
-                eprintln!("  Sorry, no documentation on {}", input.to_ascii_uppercase());
+                eprintln!(
+                    "  Sorry, no documentation on {}",
+                    input.to_ascii_uppercase()
+                );
                 eprintln!();
                 if !available.is_empty() {
                     eprintln!("  Additional information available:");
@@ -269,19 +279,8 @@ fn run_browse(cli: &Cli) -> i32 {
 
     // No topics on command line
     if no_prompt {
-        // Show all available topics (including seen man pages)
-        let mut names: Vec<String> = lib_set
-            .root_topic_names()
-            .into_iter()
-            .map(|s| s.to_string())
-            .collect();
-        // Add seen man pages that aren't already in lib topics
-        for seen_name in seen.names() {
-            if !names.iter().any(|n| n.eq_ignore_ascii_case(seen_name)) {
-                names.push(seen_name.to_string());
-            }
-        }
-        names.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
+        let mut names = names_to_owned(lib_set.root_topic_names());
+        merge_seen_names(&mut names, &seen);
 
         if names.is_empty() {
             return EXIT_SUCCESS;
@@ -415,28 +414,13 @@ fn run_interactive(
 
     // Show intro if at root and no --no-intro
     if path_stack.is_empty() && !cli.no_intro {
-        let mut names: Vec<String> = lib_set
-            .root_topic_names()
-            .into_iter()
-            .map(|s| s.to_string())
-            .collect();
-        // Include seen man pages
-        for seen_name in seen.names() {
-            if !names.iter().any(|n| n.eq_ignore_ascii_case(seen_name)) {
-                names.push(seen_name.to_string());
-            }
-        }
-        names.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
+        let mut names = names_to_owned(lib_set.root_topic_names());
+        merge_seen_names(&mut names, seen);
         if !names.is_empty() {
             eprintln!();
             eprintln!("  Information available:");
             eprintln!();
-            let name_refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
-            let formatted = engine::format_columns(&name_refs, 76);
-            for line in formatted.lines() {
-                eprintln!("  {}", line);
-            }
-            eprintln!();
+            print_topic_list(&names);
         }
     }
 
@@ -486,29 +470,17 @@ fn run_interactive(
 
         // Question mark: show topics at current level
         if trimmed == "?" {
-            let mut names: Vec<String> = if let Some(node) = current_lib_and_node {
-                engine::child_names(node).into_iter().map(|s| s.to_string()).collect()
+            let mut names = if let Some(node) = current_lib_and_node {
+                names_to_owned(engine::child_names(node))
             } else {
-                lib_set.root_topic_names().into_iter().map(|s| s.to_string()).collect()
+                names_to_owned(lib_set.root_topic_names())
             };
-            // At root level, include seen man pages
             if path_stack.is_empty() {
-                for seen_name in seen.names() {
-                    if !names.iter().any(|n| n.eq_ignore_ascii_case(seen_name)) {
-                        names.push(seen_name.to_string());
-                    }
-                }
-                names.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
+                merge_seen_names(&mut names, seen);
             }
-
             if !names.is_empty() {
                 eprintln!();
-                let name_refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
-                let formatted = engine::format_columns(&name_refs, 76);
-                for line in formatted.lines() {
-                    eprintln!("  {}", line);
-                }
-                eprintln!();
+                print_topic_list(&names);
             }
             continue;
         }
@@ -530,7 +502,7 @@ fn run_interactive(
                     let mut stdout = io::stdout().lock();
                     write_topic_output(&mut stdout, &node);
                 } else {
-                    let text = format_topic_output(&node, lib_set);
+                    let text = format_topic_output(&node);
                     page_output(&text, cli);
                 }
 
@@ -551,7 +523,10 @@ fn run_interactive(
                 input, candidates, ..
             } => {
                 eprintln!();
-                eprintln!("  Sorry, topic {} is ambiguous.  The choices are:", input.to_ascii_uppercase());
+                eprintln!(
+                    "  Sorry, topic {} is ambiguous.  The choices are:",
+                    input.to_ascii_uppercase()
+                );
                 eprintln!();
                 let names: Vec<&str> = candidates.iter().map(|s| s.as_str()).collect();
                 let formatted = engine::format_columns(&names, 76);
@@ -569,7 +544,10 @@ fn run_interactive(
                 }
 
                 eprintln!();
-                eprintln!("  Sorry, no documentation on {}", input.to_ascii_uppercase());
+                eprintln!(
+                    "  Sorry, no documentation on {}",
+                    input.to_ascii_uppercase()
+                );
                 eprintln!();
                 if !available.is_empty() {
                     eprintln!("  Additional information available:");
@@ -601,7 +579,7 @@ fn write_topic_output(w: &mut dyn Write, node: &library::NodeRef<'_>) {
     }
 }
 
-fn format_topic_output(node: &library::NodeRef<'_>, _lib_set: &engine::LibrarySet) -> String {
+fn format_topic_output(node: &library::NodeRef<'_>) -> String {
     let mut s = String::new();
     s.push('\n');
     s.push_str(node.name());
@@ -617,7 +595,35 @@ fn format_topic_output(node: &library::NodeRef<'_>, _lib_set: &engine::LibrarySe
     s
 }
 
-// ─── Pager ───────────────────────────────────────────────────────────────────
+// ─── Topic listing helpers ────────────────────────────────────────────────────
+
+/// Merge seen man page names into a topic name list, dedup and sort.
+fn merge_seen_names(names: &mut Vec<String>, seen: &SeenPages) {
+    for seen_name in seen.names() {
+        if !names.iter().any(|n| n.eq_ignore_ascii_case(seen_name)) {
+            names.push(seen_name.to_string());
+        }
+    }
+    names.sort_by_key(|a| a.to_ascii_lowercase());
+}
+
+/// Convert a `Vec<&str>` into an owned name list.
+fn names_to_owned(names: Vec<&str>) -> Vec<String> {
+    names.into_iter().map(|s| s.to_string()).collect()
+}
+
+/// Print a formatted topic listing to stderr.
+fn print_topic_list(names: &[String]) {
+    if names.is_empty() {
+        return;
+    }
+    let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+    let formatted = engine::format_columns(&refs, 76);
+    for line in formatted.lines() {
+        eprintln!("  {}", line);
+    }
+    eprintln!();
+}
 
 // ─── Man page fallback ───────────────────────────────────────────────────────
 
@@ -763,6 +769,7 @@ impl SeenPages {
     }
 
     /// Check if a topic was previously seen as a man page
+    #[allow(dead_code)] // Public API for future use (e.g., conditional man fallback)
     fn contains(&self, topic: &str) -> bool {
         self.entries.contains_key(&topic.to_lowercase())
     }

@@ -9,6 +9,8 @@
 // - Multi-library merging via LibrarySet
 // - Column formatting for topic listings
 
+use std::collections::HashSet;
+
 use crate::library::{Library, NodeRef};
 
 // ─── Result types ────────────────────────────────────────────────────────────
@@ -70,9 +72,7 @@ pub enum NavAction<'lib> {
     },
 
     /// Display multiple matched topics (wildcard match).
-    DisplayMultiple {
-        nodes: Vec<NodeRef<'lib>>,
-    },
+    DisplayMultiple { nodes: Vec<NodeRef<'lib>> },
 
     /// The input was ambiguous. Show the candidate names.
     Ambiguous {
@@ -88,9 +88,7 @@ pub enum NavAction<'lib> {
     },
 
     /// Redisplay available topics at current level (user typed `?`).
-    ShowTopics {
-        names: Vec<&'lib str>,
-    },
+    ShowTopics { names: Vec<&'lib str> },
 
     /// Go up one level (empty input at a subtopic prompt).
     GoUp,
@@ -119,11 +117,7 @@ pub fn child_names<'lib>(node: NodeRef<'lib>) -> Vec<&'lib str> {
 /// For wildcard patterns (containing `*` or `%`), all matching children
 /// are returned as `LookupResult::Ambiguous` (even if only one matches),
 /// so the caller can display all of them.
-pub fn lookup<'lib>(
-    parent: NodeRef<'lib>,
-    input: &str,
-    mode: MatchMode,
-) -> LookupResult<'lib> {
+pub fn lookup<'lib>(parent: NodeRef<'lib>, input: &str, mode: MatchMode) -> LookupResult<'lib> {
     if input.is_empty() {
         return LookupResult::NotFound;
     }
@@ -181,11 +175,7 @@ pub fn lookup<'lib>(
 ///
 /// Each element in `path` is matched against the children at the
 /// corresponding level, descending one level per element.
-pub fn resolve<'lib>(
-    root: NodeRef<'lib>,
-    path: &[&str],
-    mode: MatchMode,
-) -> ResolveResult<'lib> {
+pub fn resolve<'lib>(root: NodeRef<'lib>, path: &[&str], mode: MatchMode) -> ResolveResult<'lib> {
     let mut current = root;
 
     for (depth, &token) in path.iter().enumerate() {
@@ -384,10 +374,7 @@ impl<'lib> Navigator<'lib> {
                 } else {
                     NavAction::Ambiguous {
                         input: trimmed.to_string(),
-                        candidates: matches
-                            .iter()
-                            .map(|n| n.name().to_string())
-                            .collect(),
+                        candidates: matches.iter().map(|n| n.name().to_string()).collect(),
                     }
                 }
             }
@@ -467,20 +454,18 @@ impl LibrarySet {
     /// Return a merged, sorted, deduplicated list of all level-1 topic
     /// names across all libraries.
     pub fn root_topic_names(&self) -> Vec<&str> {
-        let mut seen_upper: Vec<String> = Vec::new();
+        let mut seen_upper: HashSet<String> = HashSet::new();
         let mut names: Vec<&str> = Vec::new();
 
         for lib in &self.libraries {
             for child in lib.root().children() {
-                let upper = child.name_upper().to_string();
-                if !seen_upper.contains(&upper) {
-                    seen_upper.push(upper);
+                if seen_upper.insert(child.name_upper().to_string()) {
                     names.push(child.name());
                 }
             }
         }
 
-        names.sort_by(|a, b| a.to_ascii_uppercase().cmp(&b.to_ascii_uppercase()));
+        names.sort_by_key(|a| a.to_ascii_uppercase());
         names
     }
 
@@ -495,17 +480,15 @@ impl LibrarySet {
 
         if is_wildcard(&input_upper) {
             // Collect all matching topics from all libraries, dedup by name_upper
-            let mut seen_upper: Vec<String> = Vec::new();
+            let mut seen_upper: HashSet<String> = HashSet::new();
             let mut matches: Vec<NodeRef<'_>> = Vec::new();
 
             for lib in &self.libraries {
                 for child in lib.root().children() {
-                    if wildcard_match(&input_upper, child.name_upper()) {
-                        let upper = child.name_upper().to_string();
-                        if !seen_upper.contains(&upper) {
-                            seen_upper.push(upper);
-                            matches.push(child);
-                        }
+                    if wildcard_match(&input_upper, child.name_upper())
+                        && seen_upper.insert(child.name_upper().to_string())
+                    {
+                        matches.push(child);
                     }
                 }
             }
@@ -1376,10 +1359,7 @@ mod tests {
 
     #[test]
     fn format_columns_long_names() {
-        let names = vec![
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZ12345",
-            "ANOTHER_LONG_NAME_HERE",
-        ];
+        let names = vec!["ABCDEFGHIJKLMNOPQRSTUVWXYZ12345", "ANOTHER_LONG_NAME_HERE"];
         let result = format_columns(&names, 40);
         // With 31-char name + 3 = 34 col width, 40/34 = 1 col
         let lines: Vec<&str> = result.trim_end().split('\n').collect();
@@ -1400,8 +1380,16 @@ mod tests {
     #[test]
     fn format_columns_no_line_exceeds_width() {
         let names = vec![
-            "APPEND", "BACKUP", "COPY", "DELETE", "DIRECTORY",
-            "EXIT", "GOTO", "HELP", "IF", "INQUIRE",
+            "APPEND",
+            "BACKUP",
+            "COPY",
+            "DELETE",
+            "DIRECTORY",
+            "EXIT",
+            "GOTO",
+            "HELP",
+            "IF",
+            "INQUIRE",
         ];
         let width = 40;
         let result = format_columns(&names, width);
@@ -1455,8 +1443,8 @@ mod tests {
         let lib = standard_library();
         let names = child_names(lib.root());
         // Builder sorts children alphabetically by uppercase name
-        let mut sorted = names.clone();
-        sorted.sort_by(|a, b| a.to_ascii_uppercase().cmp(&b.to_ascii_uppercase()));
+        let mut sorted = names.to_vec();
+        sorted.sort_by_key(|a| a.to_ascii_uppercase());
         assert_eq!(names, sorted);
     }
 

@@ -97,8 +97,8 @@ struct FlatNode {
     body: String,
     /// Indices into the flat node list for children (before sorting).
     child_indices: Vec<usize>,
-    /// Index of parent in the flat list (usize::MAX for root).
-    parent_index: usize,
+    /// Index of parent in the flat list (`None` for root).
+    parent_index: Option<usize>,
 
     // Assigned offsets (Phase 2):
     /// Absolute offset of this node record in the output file.
@@ -151,7 +151,7 @@ pub fn build_to_writer(
         level: 0,
         body: String::new(),
         child_indices: Vec::new(),
-        parent_index: usize::MAX,
+        parent_index: None,
         node_offset: 0,
         child_table_offset: 0,
         text_offset: 0,
@@ -182,14 +182,14 @@ pub fn build_to_writer(
 
     // Assign child table offsets.
     let mut child_cursor = child_region_offset;
-    for i in 0..nodes.len() {
-        let child_count = nodes[i].child_indices.len();
+    for node in &mut nodes {
+        let child_count = node.child_indices.len();
         if child_count > 0 {
-            nodes[i].child_table_offset = child_cursor;
+            node.child_table_offset = child_cursor;
             let table_size = (child_count as u32) * 4;
             child_cursor += align8(table_size);
         } else {
-            nodes[i].child_table_offset = 0;
+            node.child_table_offset = 0;
         }
     }
 
@@ -234,17 +234,17 @@ pub fn build_to_writer(
     let flags: u32 = if cfg!(target_endian = "big") { 1 } else { 0 };
 
     // 4.1 Write header (64 bytes).
-    writer.write_all(&MAGIC)?;                              // 0x00: magic (4)
-    writer.write_all(&VERSION_MAJOR.to_ne_bytes())?;        // 0x04: version_major (2)
-    writer.write_all(&VERSION_MINOR.to_ne_bytes())?;        // 0x06: version_minor (2)
-    writer.write_all(&flags.to_ne_bytes())?;                // 0x08: flags (4)
-    writer.write_all(&node_count.to_ne_bytes())?;           // 0x0C: node_count (4)
-    writer.write_all(&root_offset.to_ne_bytes())?;          // 0x10: root_offset (4)
-    writer.write_all(&text_region_offset.to_ne_bytes())?;   // 0x14: text_region_offset (4)
-    writer.write_all(&text_region_size.to_ne_bytes())?;     // 0x18: text_region_size (4)
-    writer.write_all(&file_size.to_ne_bytes())?;            // 0x1C: file_size (4)
-    writer.write_all(&build_timestamp.to_ne_bytes())?;      // 0x20: build_timestamp (8)
-    writer.write_all(&[0u8; 24])?;                          // 0x28: reserved (24)
+    writer.write_all(&MAGIC)?; // 0x00: magic (4)
+    writer.write_all(&VERSION_MAJOR.to_ne_bytes())?; // 0x04: version_major (2)
+    writer.write_all(&VERSION_MINOR.to_ne_bytes())?; // 0x06: version_minor (2)
+    writer.write_all(&flags.to_ne_bytes())?; // 0x08: flags (4)
+    writer.write_all(&node_count.to_ne_bytes())?; // 0x0C: node_count (4)
+    writer.write_all(&root_offset.to_ne_bytes())?; // 0x10: root_offset (4)
+    writer.write_all(&text_region_offset.to_ne_bytes())?; // 0x14: text_region_offset (4)
+    writer.write_all(&text_region_size.to_ne_bytes())?; // 0x18: text_region_size (4)
+    writer.write_all(&file_size.to_ne_bytes())?; // 0x1C: file_size (4)
+    writer.write_all(&build_timestamp.to_ne_bytes())?; // 0x20: build_timestamp (8)
+    writer.write_all(&[0u8; 24])?; // 0x28: reserved (24)
 
     // 4.2 Write node records (96 bytes each).
     for node in &nodes {
@@ -252,22 +252,21 @@ pub fn build_to_writer(
         let name_upper_bytes = make_name_field(&node.name_upper);
 
         let child_count = node.child_indices.len() as u16;
-        let parent_offset = if node.parent_index == usize::MAX {
-            0u32
-        } else {
-            nodes[node.parent_index].node_offset
+        let parent_offset = match node.parent_index {
+            None => 0u32,
+            Some(idx) => nodes[idx].node_offset,
         };
 
-        writer.write_all(&name_bytes)?;                         // 0x00: name (32)
-        writer.write_all(&name_upper_bytes)?;                   // 0x20: name_upper (32)
-        writer.write_all(&node.text_offset.to_ne_bytes())?;     // 0x40: text_offset (4)
-        writer.write_all(&node.text_length.to_ne_bytes())?;     // 0x44: text_length (4)
+        writer.write_all(&name_bytes)?; // 0x00: name (32)
+        writer.write_all(&name_upper_bytes)?; // 0x20: name_upper (32)
+        writer.write_all(&node.text_offset.to_ne_bytes())?; // 0x40: text_offset (4)
+        writer.write_all(&node.text_length.to_ne_bytes())?; // 0x44: text_length (4)
         writer.write_all(&node.child_table_offset.to_ne_bytes())?; // 0x48: child_table_offset (4)
-        writer.write_all(&child_count.to_ne_bytes())?;          // 0x4C: child_count (2)
-        writer.write_all(&[node.level])?;                       // 0x4E: level (1)
-        writer.write_all(&[0u8])?;                              // 0x4F: padding (1)
-        writer.write_all(&parent_offset.to_ne_bytes())?;        // 0x50: parent_offset (4)
-        writer.write_all(&[0u8; 12])?;                          // 0x54: reserved (12)
+        writer.write_all(&child_count.to_ne_bytes())?; // 0x4C: child_count (2)
+        writer.write_all(&[node.level])?; // 0x4E: level (1)
+        writer.write_all(&[0u8])?; // 0x4F: padding (1)
+        writer.write_all(&parent_offset.to_ne_bytes())?; // 0x50: parent_offset (4)
+        writer.write_all(&[0u8; 12])?; // 0x54: reserved (12)
     }
 
     // 4.3 Write child tables.
@@ -325,7 +324,7 @@ fn flatten_topic(
         level: topic.level,
         body: topic.body.clone(),
         child_indices: Vec::new(),
-        parent_index,
+        parent_index: Some(parent_index),
         node_offset: 0,
         child_table_offset: 0,
         text_offset: 0,
@@ -378,23 +377,7 @@ mod tests {
         (buf, report)
     }
 
-    /// Read a native-endian u32 at the given byte offset.
-    fn read_u32(buf: &[u8], offset: usize) -> u32 {
-        let bytes: [u8; 4] = buf[offset..offset + 4].try_into().unwrap();
-        u32::from_ne_bytes(bytes)
-    }
-
-    /// Read a native-endian u16 at the given byte offset.
-    fn read_u16(buf: &[u8], offset: usize) -> u16 {
-        let bytes: [u8; 2] = buf[offset..offset + 2].try_into().unwrap();
-        u16::from_ne_bytes(bytes)
-    }
-
-    /// Read a native-endian u64 at the given byte offset.
-    fn read_u64(buf: &[u8], offset: usize) -> u64 {
-        let bytes: [u8; 8] = buf[offset..offset + 8].try_into().unwrap();
-        u64::from_ne_bytes(bytes)
-    }
+    use crate::binary::{read_u16, read_u32, read_u64};
 
     /// Read a null-terminated string from a 32-byte name field.
     fn read_name(buf: &[u8], offset: usize) -> String {
@@ -620,7 +603,13 @@ mod tests {
         let node_count = read_u32(&buf, 0x0C);
         for i in 0..node_count {
             let offset = HEADER_SIZE + i * NODE_SIZE;
-            assert_eq!(offset % 8, 0, "node {} at offset {} is not 8-byte aligned", i, offset);
+            assert_eq!(
+                offset % 8,
+                0,
+                "node {} at offset {} is not 8-byte aligned",
+                i,
+                offset
+            );
         }
     }
 
@@ -678,12 +667,18 @@ mod tests {
             assert!(
                 t_off >= text_region_offset,
                 "node {} text_offset {} is before text region {}",
-                i, t_off, text_region_offset
+                i,
+                t_off,
+                text_region_offset
             );
             assert!(
                 t_off + t_len <= text_region_offset + text_region_size,
                 "node {} text extends past text region: {} + {} > {} + {}",
-                i, t_off, t_len, text_region_offset, text_region_size
+                i,
+                t_off,
+                t_len,
+                text_region_offset,
+                text_region_size
             );
             assert!(
                 t_off + t_len <= file_size,
@@ -722,11 +717,7 @@ mod tests {
 
         // text_region_size should match the sum of body text lengths from the parser.
         let tree = source::parse("test.hlp", hlp.as_bytes()).unwrap();
-        let total_text: u64 = tree
-            .topics
-            .iter()
-            .map(|t| t.body.len() as u64)
-            .sum();
+        let total_text: u64 = tree.topics.iter().map(|t| t.body.len() as u64).sum();
         assert_eq!(report.text_region_size, total_text);
         assert!(report.text_region_size > 0);
     }
@@ -1070,8 +1061,7 @@ mod tests {
 
         // Build to Vec<u8>.
         let mut vec_buf = Vec::new();
-        let report_vec =
-            build_to_writer(&tree, &mut vec_buf, &BuildOptions::default()).unwrap();
+        let report_vec = build_to_writer(&tree, &mut vec_buf, &BuildOptions::default()).unwrap();
 
         // Build to file.
         let dir = tempfile::tempdir().unwrap();
@@ -1181,13 +1171,13 @@ mod tests {
         let _: &dyn std::error::Error = &err;
         assert!(std::error::Error::source(&err).is_none());
 
-        let err2 = BuildError::Io(io::Error::new(io::ErrorKind::Other, "test"));
+        let err2 = BuildError::Io(io::Error::other("test"));
         assert!(std::error::Error::source(&err2).is_some());
     }
 
     #[test]
     fn build_error_from_io() {
-        let io_err = io::Error::new(io::ErrorKind::Other, "test");
+        let io_err = io::Error::other("test");
         let build_err: BuildError = io_err.into();
         match build_err {
             BuildError::Io(_) => {}
@@ -1292,7 +1282,13 @@ mod tests {
             assert_eq!(buf[off + 0x4F], 0, "node {} padding byte not zero", i);
             // Reserved 12 bytes at 0x54..0x60
             for j in 0x54..0x60 {
-                assert_eq!(buf[off + j], 0, "node {} reserved byte at {:02x} not zero", i, j);
+                assert_eq!(
+                    buf[off + j],
+                    0,
+                    "node {} reserved byte at {:02x} not zero",
+                    i,
+                    j
+                );
             }
         }
     }

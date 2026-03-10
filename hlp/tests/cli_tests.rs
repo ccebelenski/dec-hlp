@@ -1,4 +1,5 @@
 // CLI integration tests: invoke hlp binary as subprocess and check behavior
+#![allow(deprecated)] // assert_cmd::Command::cargo_bin is deprecated but replacement requires macro
 
 use assert_cmd::Command;
 use predicates::prelude::*;

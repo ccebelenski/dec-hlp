@@ -47,10 +47,7 @@ pub enum ParseError {
         expected_max: u8,
     },
     /// Level number outside the valid range 1-9.
-    InvalidLevel {
-        location: SourceLocation,
-        level: u8,
-    },
+    InvalidLevel { location: SourceLocation, level: u8 },
     /// Topic name exceeds 31 characters.
     NameTooLong {
         location: SourceLocation,
@@ -58,16 +55,17 @@ pub enum ParseError {
         length: usize,
     },
     /// I/O error reading a source file.
-    Io {
-        file: String,
-        source: io::Error,
-    },
+    Io { file: String, source: io::Error },
 }
 
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ParseError::NonSequentialLevel { location, found, expected_max } => {
+            ParseError::NonSequentialLevel {
+                location,
+                found,
+                expected_max,
+            } => {
                 write!(
                     f,
                     "{}:{}: non-sequential level {}, expected at most {}",
@@ -81,7 +79,11 @@ impl fmt::Display for ParseError {
                     location.file, location.line, level
                 )
             }
-            ParseError::NameTooLong { location, name, length } => {
+            ParseError::NameTooLong {
+                location,
+                name,
+                length,
+            } => {
                 write!(
                     f,
                     "{}:{}: topic name '{}' is {} characters (maximum {})",
@@ -134,7 +136,7 @@ fn parse_header_line(line: &str) -> Option<(u8, String)> {
 
     // Skip whitespace after the digit
     let rest = &line[1..];
-    let name_part = rest.trim_start_matches(|c: char| c == ' ' || c == '\t');
+    let name_part = rest.trim_start_matches([' ', '\t']);
 
     // If the name is empty (digit followed by only spaces), it's body text
     if name_part.is_empty() {
@@ -156,10 +158,11 @@ pub fn parse(name: &str, reader: impl Read) -> Result<SourceTree, ParseError> {
     let mut raw_content = String::new();
     {
         let mut r = buf_reader;
-        r.read_to_string(&mut raw_content).map_err(|e| ParseError::Io {
-            file: name.to_string(),
-            source: e,
-        })?;
+        r.read_to_string(&mut raw_content)
+            .map_err(|e| ParseError::Io {
+                file: name.to_string(),
+                source: e,
+            })?;
     }
 
     // Normalize CRLF to LF
@@ -173,7 +176,7 @@ pub fn parse(name: &str, reader: impl Read) -> Result<SourceTree, ParseError> {
     struct RawTopic {
         level: u8,
         name: String,
-        #[allow(dead_code)]
+        #[allow(dead_code)] // Retained for potential error reporting enhancements
         line_num: usize,
         body_lines: Vec<String>,
     }
@@ -190,7 +193,7 @@ pub fn parse(name: &str, reader: impl Read) -> Result<SourceTree, ParseError> {
 
         if let Some((level, topic_name)) = parse_header_line(line) {
             // Validate level range (should be 1-9 from parse_header_line, but check anyway)
-            if level < 1 || level > 9 {
+            if !(1..=9).contains(&level) {
                 return Err(ParseError::InvalidLevel {
                     location: SourceLocation {
                         file: name.to_string(),
@@ -250,11 +253,8 @@ pub fn parse(name: &str, reader: impl Read) -> Result<SourceTree, ParseError> {
                 line_num,
                 body_lines: Vec::new(),
             });
-        } else {
-            if !before_first_header {
-                current_body.push(line.to_string());
-            }
-            // If before first header, silently ignore
+        } else if !before_first_header {
+            current_body.push(line.to_string());
         }
     }
 
@@ -323,17 +323,9 @@ pub fn parse(name: &str, reader: impl Read) -> Result<SourceTree, ParseError> {
         }
     }
 
-    // Handle duplicate level-1 topics: last definition wins (case-insensitive)
-    let mut deduped: Vec<Topic> = Vec::new();
-    for topic in result_topics {
-        let name_upper = topic.name.to_uppercase();
-        if let Some(pos) = deduped.iter().position(|t| t.name.to_uppercase() == name_upper) {
-            deduped.remove(pos);
-        }
-        deduped.push(topic);
-    }
-
-    Ok(SourceTree { topics: deduped })
+    Ok(SourceTree {
+        topics: dedup_topics(result_topics),
+    })
 }
 
 /// Build a body string from collected body lines.
@@ -381,19 +373,29 @@ pub fn parse_file(path: &Path) -> Result<SourceTree, ParseError> {
 /// subtree replaces the earlier definition. This matches VMS LIBRARIAN
 /// behavior.
 pub fn merge(trees: Vec<SourceTree>) -> SourceTree {
-    let mut merged: Vec<Topic> = Vec::new();
+    let all_topics: Vec<Topic> = trees.into_iter().flat_map(|t| t.topics).collect();
+    SourceTree {
+        topics: dedup_topics(all_topics),
+    }
+}
 
-    for tree in trees {
-        for topic in tree.topics {
-            let name_upper = topic.name.to_uppercase();
-            if let Some(pos) = merged.iter().position(|t| t.name.to_uppercase() == name_upper) {
-                merged.remove(pos);
-            }
-            merged.push(topic);
-        }
+/// Deduplicate topics by name (case-insensitive), keeping the last occurrence.
+fn dedup_topics(topics: Vec<Topic>) -> Vec<Topic> {
+    use std::collections::HashMap;
+
+    // Build a map from uppercase name → last index
+    let mut last_index: HashMap<String, usize> = HashMap::new();
+    for (i, topic) in topics.iter().enumerate() {
+        last_index.insert(topic.name.to_uppercase(), i);
     }
 
-    SourceTree { topics: merged }
+    // Collect only the last occurrence of each name, preserving order
+    topics
+        .into_iter()
+        .enumerate()
+        .filter(|(i, t)| last_index.get(&t.name.to_uppercase()) == Some(i))
+        .map(|(_, t)| t)
+        .collect()
 }
 
 #[cfg(test)]
@@ -565,7 +567,11 @@ mod tests {
         let input = "1 TOPIC\n  Body.\n3 BAD\n  Bad body.\n";
         let err = parse_str(input).unwrap_err();
         match err {
-            ParseError::NonSequentialLevel { location, found, expected_max } => {
+            ParseError::NonSequentialLevel {
+                location,
+                found,
+                expected_max,
+            } => {
                 assert_eq!(found, 3);
                 assert_eq!(expected_max, 2);
                 assert_eq!(location.line, 3);
@@ -579,7 +585,11 @@ mod tests {
         let input = "1 A\n  Body.\n2 B\n  Body.\n5 C\n  Body.\n";
         let err = parse_str(input).unwrap_err();
         match err {
-            ParseError::NonSequentialLevel { found, expected_max, .. } => {
+            ParseError::NonSequentialLevel {
+                found,
+                expected_max,
+                ..
+            } => {
                 assert_eq!(found, 5);
                 assert_eq!(expected_max, 3);
             }
@@ -611,7 +621,11 @@ mod tests {
         let input = "2 ORPHAN\n  Body.\n";
         let err = parse_str(input).unwrap_err();
         match err {
-            ParseError::NonSequentialLevel { found, expected_max, .. } => {
+            ParseError::NonSequentialLevel {
+                found,
+                expected_max,
+                ..
+            } => {
                 assert_eq!(found, 2);
                 assert_eq!(expected_max, 1);
             }
@@ -687,7 +701,9 @@ mod tests {
         let input = format!("1 {}\n  Body.\n", name);
         let err = parse_str(&input).unwrap_err();
         match err {
-            ParseError::NameTooLong { location, length, .. } => {
+            ParseError::NameTooLong {
+                location, length, ..
+            } => {
                 assert_eq!(length, 32);
                 assert_eq!(location.line, 1);
             }
@@ -1022,13 +1038,16 @@ mod tests {
     fn parse_error_is_error_trait() {
         let err = ParseError::Io {
             file: "test.hlp".to_string(),
-            source: io::Error::new(io::ErrorKind::Other, "test"),
+            source: io::Error::other("test"),
         };
         let _: &dyn std::error::Error = &err;
         assert!(err.source().is_some());
 
         let err2 = ParseError::NonSequentialLevel {
-            location: SourceLocation { file: "t".to_string(), line: 1 },
+            location: SourceLocation {
+                file: "t".to_string(),
+                line: 1,
+            },
             found: 3,
             expected_max: 2,
         };
@@ -1089,20 +1108,26 @@ mod tests {
 
     #[test]
     fn merge_duplicate_replaces_entire_subtree() {
-        let tree_a = parse_str("\
+        let tree_a = parse_str(
+            "\
 1 SHARED
   From A.
 2 A_CHILD
   A child text.
-").unwrap();
-        let tree_b = parse_str("\
+",
+        )
+        .unwrap();
+        let tree_b = parse_str(
+            "\
 1 SHARED
   From B.
 2 B_CHILD
   B child text.
 2 B_EXTRA
   Extra from B.
-").unwrap();
+",
+        )
+        .unwrap();
         let merged = merge(vec![tree_a, tree_b]);
         assert_eq!(merged.topics.len(), 1);
         assert!(merged.topics[0].body.contains("From B."));
@@ -1113,9 +1138,18 @@ mod tests {
 
     #[test]
     fn source_location_equality() {
-        let a = SourceLocation { file: "a.hlp".to_string(), line: 5 };
-        let b = SourceLocation { file: "a.hlp".to_string(), line: 5 };
-        let c = SourceLocation { file: "b.hlp".to_string(), line: 5 };
+        let a = SourceLocation {
+            file: "a.hlp".to_string(),
+            line: 5,
+        };
+        let b = SourceLocation {
+            file: "a.hlp".to_string(),
+            line: 5,
+        };
+        let c = SourceLocation {
+            file: "b.hlp".to_string(),
+            line: 5,
+        };
         assert_eq!(a, b);
         assert_ne!(a, c);
     }

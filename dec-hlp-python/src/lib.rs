@@ -3,14 +3,14 @@
 // Exposes Library, Topic, Navigator, and NavResult classes to Python via pyo3.
 // Handles Rust lifetime constraints by extracting owned data for Python objects.
 
-use pyo3::prelude::*;
 use pyo3::exceptions::PyRuntimeError;
+use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
-use dec_hlp::library;
-use dec_hlp::engine;
-use dec_hlp::source;
 use dec_hlp::builder;
+use dec_hlp::engine;
+use dec_hlp::library;
+use dec_hlp::source;
 
 use std::path::Path;
 
@@ -35,7 +35,12 @@ struct Topic {
 #[pymethods]
 impl Topic {
     fn __repr__(&self) -> String {
-        format!("Topic(name={:?}, level={}, children={})", self.name, self.level, self.children.len())
+        format!(
+            "Topic(name={:?}, level={}, children={})",
+            self.name,
+            self.level,
+            self.children.len()
+        )
     }
 
     fn __str__(&self) -> String {
@@ -117,7 +122,11 @@ impl Library {
 
     /// Return the names of all level-1 (root) topics.
     fn root_topics(&self) -> Vec<String> {
-        self.inner.root().children().map(|c| c.name().to_string()).collect()
+        self.inner
+            .root()
+            .children()
+            .map(|c| c.name().to_string())
+            .collect()
     }
 
     /// Look up a topic by path.
@@ -158,7 +167,10 @@ impl Library {
         let root = self.inner.root();
 
         if path.is_empty() {
-            return Ok(engine::child_names(root).into_iter().map(|s| s.to_string()).collect());
+            return Ok(engine::child_names(root)
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect());
         }
 
         let mode = if exact {
@@ -170,9 +182,10 @@ impl Library {
         let path_refs: Vec<&str> = path.iter().map(|s| s.as_str()).collect();
 
         match engine::resolve(root, &path_refs, mode) {
-            engine::ResolveResult::Found(node) => {
-                Ok(engine::child_names(node).into_iter().map(|s| s.to_string()).collect())
-            }
+            engine::ResolveResult::Found(node) => Ok(engine::child_names(node)
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect()),
             _ => Ok(vec![]),
         }
     }
@@ -205,8 +218,9 @@ impl Navigator {
     /// keeps the underlying `library::Library` alive for the lifetime of this
     /// Navigator. This is guaranteed by holding `Py<Library>`.
     unsafe fn new_from_library(library_ref: &library::Library, py_library: Py<Library>) -> Self {
-        let static_ref: &'static library::Library =
-            unsafe { std::mem::transmute::<&library::Library, &'static library::Library>(library_ref) };
+        let static_ref: &'static library::Library = unsafe {
+            std::mem::transmute::<&library::Library, &'static library::Library>(library_ref)
+        };
         Navigator {
             _library: py_library,
             inner: engine::Navigator::new(static_ref),
@@ -289,7 +303,10 @@ fn convert_nav_action(action: engine::NavAction<'_>) -> NavResult {
             available: None,
             names: None,
         },
-        engine::NavAction::Ambiguous { input: _, candidates } => NavResult {
+        engine::NavAction::Ambiguous {
+            input: _,
+            candidates,
+        } => NavResult {
             action: "ambiguous".to_string(),
             topic: None,
             topics: None,
@@ -297,7 +314,10 @@ fn convert_nav_action(action: engine::NavAction<'_>) -> NavResult {
             available: None,
             names: None,
         },
-        engine::NavAction::NotFound { input: _, available } => NavResult {
+        engine::NavAction::NotFound {
+            input: _,
+            available,
+        } => NavResult {
             action: "not_found".to_string(),
             topic: None,
             topics: None,

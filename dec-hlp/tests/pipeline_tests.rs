@@ -221,7 +221,10 @@ fn pipeline_large_file_roundtrip() {
     // Generate a large source
     let mut hlp = String::new();
     for i in 0..200 {
-        hlp.push_str(&format!("1 TOPIC_{:04}\n\n  Help text for topic {}.\n\n", i, i));
+        hlp.push_str(&format!(
+            "1 TOPIC_{:04}\n\n  Help text for topic {}.\n\n",
+            i, i
+        ));
         for j in 0..3 {
             hlp.push_str(&format!(
                 "2 SUB_{:03}\n\n  Subtopic {} of topic {}.\n\n",
@@ -303,11 +306,7 @@ fn pipeline_edge_cases_roundtrip() {
     let (_tmp, lib) = build_library_from_fixture("edge-cases.hlp");
 
     // Empty topic has no body
-    match engine::resolve(
-        lib.root(),
-        &["EMPTY_TOPIC"],
-        engine::MatchMode::Exact,
-    ) {
+    match engine::resolve(lib.root(), &["EMPTY_TOPIC"], engine::MatchMode::Exact) {
         engine::ResolveResult::Found(node) => {
             assert!(node.body_text().is_empty());
         }
@@ -315,11 +314,7 @@ fn pipeline_edge_cases_roundtrip() {
     }
 
     // Container topic has children
-    match engine::resolve(
-        lib.root(),
-        &["CONTAINER"],
-        engine::MatchMode::Exact,
-    ) {
+    match engine::resolve(lib.root(), &["CONTAINER"], engine::MatchMode::Exact) {
         engine::ResolveResult::Found(node) => {
             assert_eq!(node.child_count(), 2);
         }
@@ -339,11 +334,7 @@ fn pipeline_edge_cases_roundtrip() {
     }
 
     // Multi-word name
-    match engine::resolve(
-        lib.root(),
-        &["Multi Word Name"],
-        engine::MatchMode::Exact,
-    ) {
+    match engine::resolve(lib.root(), &["Multi Word Name"], engine::MatchMode::Exact) {
         engine::ResolveResult::Found(node) => {
             assert!(node.body_text().contains("spaces"));
         }
@@ -351,11 +342,7 @@ fn pipeline_edge_cases_roundtrip() {
     }
 
     // Duplicate (last wins)
-    match engine::resolve(
-        lib.root(),
-        &["DUPLICATE"],
-        engine::MatchMode::Exact,
-    ) {
+    match engine::resolve(lib.root(), &["DUPLICATE"], engine::MatchMode::Exact) {
         engine::ResolveResult::Found(node) => {
             assert!(node.body_text().contains("Second definition"));
         }

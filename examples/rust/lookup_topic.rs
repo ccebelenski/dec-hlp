@@ -43,10 +43,7 @@ fn main() {
                 println!();
                 println!("  Additional information available:");
                 println!();
-                print!(
-                    "  {}",
-                    dec_hlp::engine::format_columns(&children, 76)
-                );
+                print!("  {}", dec_hlp::engine::format_columns(&children, 76));
             }
         }
         dec_hlp::engine::ResolveResult::AmbiguousAt {

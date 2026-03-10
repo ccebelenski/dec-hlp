@@ -1,3 +1,7 @@
+// FFI functions intentionally accept raw pointers without being marked `unsafe`;
+// the safety contract is documented per-function and enforced internally.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+
 // C-compatible FFI bindings for the dec-hlp library.
 //
 // All Rust types are hidden behind opaque pointers. Every function returns an
@@ -289,7 +293,7 @@ pub extern "C" fn dechlp_topic_lookup(
 
         let lib = unsafe { &*lib };
         let root = lib.inner.root();
-        let str_refs: Vec<&str> = components.iter().copied().collect();
+        let str_refs: Vec<&str> = components.to_vec();
 
         match engine::resolve(root, &str_refs, mode) {
             ResolveResult::Found(node) => {
@@ -311,7 +315,9 @@ pub extern "C" fn dechlp_topic_lookup(
                 }
                 DECHLP_OK
             }
-            ResolveResult::AmbiguousAt { input, candidates, .. } => {
+            ResolveResult::AmbiguousAt {
+                input, candidates, ..
+            } => {
                 set_last_error(&format!(
                     "ambiguous topic '{}': matches {}",
                     input,
@@ -358,11 +364,13 @@ pub extern "C" fn dechlp_topic_name(
 
         let lib = unsafe { &*lib };
         let root = lib.inner.root();
-        let str_refs: Vec<&str> = components.iter().copied().collect();
+        let str_refs: Vec<&str> = components.to_vec();
 
         match engine::resolve(root, &str_refs, mode) {
             ResolveResult::Found(node) => unsafe { write_owned_string(node.name(), out_name) },
-            ResolveResult::AmbiguousAt { input, candidates, .. } => {
+            ResolveResult::AmbiguousAt {
+                input, candidates, ..
+            } => {
                 set_last_error(&format!(
                     "ambiguous topic '{}': matches {}",
                     input,
@@ -413,14 +421,16 @@ pub extern "C" fn dechlp_children_count(
             Err(code) => return code,
         };
 
-        let str_refs: Vec<&str> = components.iter().copied().collect();
+        let str_refs: Vec<&str> = components.to_vec();
 
         match engine::resolve(root, &str_refs, mode) {
             ResolveResult::Found(node) => {
                 unsafe { *out_count = node.child_count() as u32 };
                 DECHLP_OK
             }
-            ResolveResult::AmbiguousAt { input, candidates, .. } => {
+            ResolveResult::AmbiguousAt {
+                input, candidates, ..
+            } => {
                 set_last_error(&format!(
                     "ambiguous topic '{}': matches {}",
                     input,
@@ -470,11 +480,13 @@ pub extern "C" fn dechlp_children_name(
                 Ok(c) => c,
                 Err(code) => return code,
             };
-            let str_refs: Vec<&str> = components.iter().copied().collect();
+            let str_refs: Vec<&str> = components.to_vec();
 
             match engine::resolve(root, &str_refs, mode) {
                 ResolveResult::Found(n) => n,
-                ResolveResult::AmbiguousAt { input, candidates, .. } => {
+                ResolveResult::AmbiguousAt {
+                    input, candidates, ..
+                } => {
                     set_last_error(&format!(
                         "ambiguous topic '{}': matches {}",
                         input,
@@ -545,11 +557,13 @@ pub extern "C" fn dechlp_children_names(
                 Ok(c) => c,
                 Err(code) => return code,
             };
-            let str_refs: Vec<&str> = components.iter().copied().collect();
+            let str_refs: Vec<&str> = components.to_vec();
 
             match engine::resolve(root, &str_refs, mode) {
                 ResolveResult::Found(n) => n,
-                ResolveResult::AmbiguousAt { input, candidates, .. } => {
+                ResolveResult::AmbiguousAt {
+                    input, candidates, ..
+                } => {
                     set_last_error(&format!(
                         "ambiguous topic '{}': matches {}",
                         input,

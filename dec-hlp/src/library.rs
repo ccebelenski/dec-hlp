@@ -32,10 +32,7 @@ pub enum LibraryError {
     /// File is too small, missing magic, wrong endianness, bad version, etc.
     InvalidFormat(String),
     /// An offset in the file points outside valid bounds.
-    CorruptOffset {
-        context: String,
-        offset: u32,
-    },
+    CorruptOffset { context: String, offset: u32 },
     /// I/O error during open or mmap.
     Io(std::io::Error),
 }
@@ -114,8 +111,10 @@ pub struct Library {
     header: Header,
     root_offset: u32,
     #[allow(dead_code)]
+    // Read from binary header for format completeness; available for future validation
     text_region_offset: u32,
     #[allow(dead_code)]
+    // Read from binary header for format completeness; available for future validation
     text_region_size: u32,
 }
 
@@ -172,8 +171,7 @@ impl Library {
         if data[0..4] != MAGIC {
             return Err(LibraryError::InvalidFormat(format!(
                 "bad magic: expected {:02X}{:02X}{:02X}{:02X}, got {:02X}{:02X}{:02X}{:02X}",
-                MAGIC[0], MAGIC[1], MAGIC[2], MAGIC[3],
-                data[0], data[1], data[2], data[3]
+                MAGIC[0], MAGIC[1], MAGIC[2], MAGIC[3], data[0], data[1], data[2], data[3]
             )));
         }
 
@@ -191,8 +189,16 @@ impl Library {
         // 3. Endianness flag matches native
         let endian_flag = flags & 1;
         if endian_flag != NATIVE_ENDIAN_FLAG {
-            let file_endian = if endian_flag == 0 { "little-endian" } else { "big-endian" };
-            let native_endian = if NATIVE_ENDIAN_FLAG == 0 { "little-endian" } else { "big-endian" };
+            let file_endian = if endian_flag == 0 {
+                "little-endian"
+            } else {
+                "big-endian"
+            };
+            let native_endian = if NATIVE_ENDIAN_FLAG == 0 {
+                "little-endian"
+            } else {
+                "big-endian"
+            };
             return Err(LibraryError::InvalidFormat(format!(
                 "endianness mismatch: file is {}, host is {}; rebuild the library from source",
                 file_endian, native_endian
@@ -362,10 +368,9 @@ impl<'lib> NodeRef<'lib> {
         &data[text_offset..text_offset + text_length]
     }
 
-    /// The body text as a string slice. Panics if not valid UTF-8.
+    /// The body text as a string slice. Returns empty string if not valid UTF-8.
     pub fn body_text(&self) -> &'lib str {
-        std::str::from_utf8(self.body_bytes())
-            .expect("body text is not valid UTF-8")
+        std::str::from_utf8(self.body_bytes()).unwrap_or("")
     }
 
     /// Number of direct children.
@@ -436,26 +441,7 @@ impl<'lib> NodeRef<'lib> {
 
 // ─── Helper functions ────────────────────────────────────────────────────────
 
-/// Read a little-endian u16 from a byte slice at the given offset.
-#[inline]
-fn read_u16(data: &[u8], offset: usize) -> u16 {
-    let bytes: [u8; 2] = data[offset..offset + 2].try_into().unwrap();
-    u16::from_ne_bytes(bytes)
-}
-
-/// Read a native-endian u32 from a byte slice at the given offset.
-#[inline]
-fn read_u32(data: &[u8], offset: usize) -> u32 {
-    let bytes: [u8; 4] = data[offset..offset + 4].try_into().unwrap();
-    u32::from_ne_bytes(bytes)
-}
-
-/// Read a native-endian u64 from a byte slice at the given offset.
-#[inline]
-fn read_u64(data: &[u8], offset: usize) -> u64 {
-    let bytes: [u8; 8] = data[offset..offset + 8].try_into().unwrap();
-    u64::from_ne_bytes(bytes)
-}
+use crate::binary::{read_u16, read_u32, read_u64};
 
 /// Extract a null-terminated UTF-8 string from a fixed-width byte field.
 /// Returns the str up to (but not including) the first NUL byte.
@@ -472,28 +458,7 @@ mod tests {
 
     // ── Test helpers: build .hlib binary data by hand ──
 
-    /// Write a native-endian u16 into `buf` at `offset`.
-    fn write_u16(buf: &mut [u8], offset: usize, val: u16) {
-        buf[offset..offset + 2].copy_from_slice(&val.to_ne_bytes());
-    }
-
-    /// Write a native-endian u32 into `buf` at `offset`.
-    fn write_u32(buf: &mut [u8], offset: usize, val: u32) {
-        buf[offset..offset + 4].copy_from_slice(&val.to_ne_bytes());
-    }
-
-    /// Write a native-endian u64 into `buf` at `offset`.
-    fn write_u64(buf: &mut [u8], offset: usize, val: u64) {
-        buf[offset..offset + 8].copy_from_slice(&val.to_ne_bytes());
-    }
-
-    /// Write a null-padded string into `buf` at `offset` (field_len bytes).
-    fn write_name(buf: &mut [u8], offset: usize, name: &str, field_len: usize) {
-        let name_bytes = name.as_bytes();
-        let copy_len = name_bytes.len().min(field_len - 1);
-        buf[offset..offset + copy_len].copy_from_slice(&name_bytes[..copy_len]);
-        // rest is already zeroed
-    }
+    use crate::binary::{write_name, write_u16, write_u32, write_u64};
 
     /// Round up to next 8-byte boundary.
     fn align8(x: usize) -> usize {
@@ -563,12 +528,7 @@ mod tests {
             parent_index: None,
         });
 
-        fn flatten(
-            topics: &[TestTopic],
-            parent_idx: usize,
-            level: u8,
-            flat: &mut Vec<FlatNode>,
-        ) {
+        fn flatten(topics: &[TestTopic], parent_idx: usize, level: u8, flat: &mut Vec<FlatNode>) {
             // Collect children for this parent, sorted by uppercase name
             let mut sorted: Vec<usize> = Vec::new();
             for t in topics {
@@ -645,7 +605,7 @@ mod tests {
             let node_offset = node_region_offset + i * NODE_SIZE;
 
             // name (32 bytes, null-padded)
-            write_name(&mut buf, node_offset + 0x00, &node.name, 32);
+            write_name(&mut buf, node_offset, &node.name, 32);
             // name_upper (32 bytes, null-padded)
             write_name(&mut buf, node_offset + 0x20, &node.name_upper, 32);
             // text_offset
@@ -655,7 +615,11 @@ mod tests {
             // child_table_offset
             write_u32(&mut buf, node_offset + 0x48, child_table_offsets[i]);
             // child_count
-            write_u16(&mut buf, node_offset + 0x4C, node.child_indices.len() as u16);
+            write_u16(
+                &mut buf,
+                node_offset + 0x4C,
+                node.child_indices.len() as u16,
+            );
             // level
             buf[node_offset + 0x4E] = node.level;
             // padding byte at 0x4F is already 0
@@ -735,9 +699,21 @@ mod tests {
     #[test]
     fn root_children_count() {
         let data = build_test_hlib(&[
-            TestTopic { name: "COPY", body: "Copy help.", children: vec![] },
-            TestTopic { name: "DELETE", body: "Delete help.", children: vec![] },
-            TestTopic { name: "RENAME", body: "Rename help.", children: vec![] },
+            TestTopic {
+                name: "COPY",
+                body: "Copy help.",
+                children: vec![],
+            },
+            TestTopic {
+                name: "DELETE",
+                body: "Delete help.",
+                children: vec![],
+            },
+            TestTopic {
+                name: "RENAME",
+                body: "Rename help.",
+                children: vec![],
+            },
         ]);
         let lib = Library::from_bytes(data).unwrap();
         assert_eq!(lib.root().child_count(), 3);
@@ -746,9 +722,21 @@ mod tests {
     #[test]
     fn root_children_sorted() {
         let data = build_test_hlib(&[
-            TestTopic { name: "Zebra", body: "Z.", children: vec![] },
-            TestTopic { name: "Alpha", body: "A.", children: vec![] },
-            TestTopic { name: "Middle", body: "M.", children: vec![] },
+            TestTopic {
+                name: "Zebra",
+                body: "Z.",
+                children: vec![],
+            },
+            TestTopic {
+                name: "Alpha",
+                body: "A.",
+                children: vec![],
+            },
+            TestTopic {
+                name: "Middle",
+                body: "M.",
+                children: vec![],
+            },
         ]);
         let lib = Library::from_bytes(data).unwrap();
         let names: Vec<&str> = lib.root().children().map(|n| n.name_upper()).collect();
@@ -758,8 +746,16 @@ mod tests {
     #[test]
     fn navigate_to_child() {
         let data = build_test_hlib(&[
-            TestTopic { name: "COPY", body: "Copy help.", children: vec![] },
-            TestTopic { name: "DELETE", body: "Delete help.", children: vec![] },
+            TestTopic {
+                name: "COPY",
+                body: "Copy help.",
+                children: vec![],
+            },
+            TestTopic {
+                name: "DELETE",
+                body: "Delete help.",
+                children: vec![],
+            },
         ]);
         let lib = Library::from_bytes(data).unwrap();
         let child = lib.root().child(0).unwrap();
@@ -770,16 +766,22 @@ mod tests {
 
     #[test]
     fn navigate_to_grandchild() {
-        let data = build_test_hlib(&[
-            TestTopic {
-                name: "COPY",
-                body: "Copy help.",
-                children: vec![
-                    TestTopic { name: "/CONFIRM", body: "Confirm help.", children: vec![] },
-                    TestTopic { name: "/LOG", body: "Log help.", children: vec![] },
-                ],
-            },
-        ]);
+        let data = build_test_hlib(&[TestTopic {
+            name: "COPY",
+            body: "Copy help.",
+            children: vec![
+                TestTopic {
+                    name: "/CONFIRM",
+                    body: "Confirm help.",
+                    children: vec![],
+                },
+                TestTopic {
+                    name: "/LOG",
+                    body: "Log help.",
+                    children: vec![],
+                },
+            ],
+        }]);
         let lib = Library::from_bytes(data).unwrap();
         let copy = lib.root().child(0).unwrap();
         assert_eq!(copy.name(), "COPY");
@@ -798,9 +800,11 @@ mod tests {
 
     #[test]
     fn read_body_text() {
-        let data = build_test_hlib(&[
-            TestTopic { name: "COPY", body: "Creates a copy of a file.", children: vec![] },
-        ]);
+        let data = build_test_hlib(&[TestTopic {
+            name: "COPY",
+            body: "Creates a copy of a file.",
+            children: vec![],
+        }]);
         let lib = Library::from_bytes(data).unwrap();
         let copy = lib.root().child(0).unwrap();
         assert_eq!(copy.body_text(), "Creates a copy of a file.");
@@ -808,15 +812,15 @@ mod tests {
 
     #[test]
     fn empty_body_node() {
-        let data = build_test_hlib(&[
-            TestTopic {
-                name: "CONTAINER",
-                body: "",
-                children: vec![
-                    TestTopic { name: "CHILD", body: "Child text.", children: vec![] },
-                ],
-            },
-        ]);
+        let data = build_test_hlib(&[TestTopic {
+            name: "CONTAINER",
+            body: "",
+            children: vec![TestTopic {
+                name: "CHILD",
+                body: "Child text.",
+                children: vec![],
+            }],
+        }]);
         let lib = Library::from_bytes(data).unwrap();
         let container = lib.root().child(0).unwrap();
         assert_eq!(container.body_text(), "");
@@ -826,15 +830,15 @@ mod tests {
 
     #[test]
     fn parent_offset_correct() {
-        let data = build_test_hlib(&[
-            TestTopic {
-                name: "COPY",
-                body: "Copy.",
-                children: vec![
-                    TestTopic { name: "/LOG", body: "Log.", children: vec![] },
-                ],
-            },
-        ]);
+        let data = build_test_hlib(&[TestTopic {
+            name: "COPY",
+            body: "Copy.",
+            children: vec![TestTopic {
+                name: "/LOG",
+                body: "Log.",
+                children: vec![],
+            }],
+        }]);
         let lib = Library::from_bytes(data).unwrap();
         let copy = lib.root().child(0).unwrap();
         let log = copy.child(0).unwrap();
@@ -854,9 +858,11 @@ mod tests {
 
     #[test]
     fn node_at_valid_offset() {
-        let data = build_test_hlib(&[
-            TestTopic { name: "ALPHA", body: "A.", children: vec![] },
-        ]);
+        let data = build_test_hlib(&[TestTopic {
+            name: "ALPHA",
+            body: "A.",
+            children: vec![],
+        }]);
         let lib = Library::from_bytes(data).unwrap();
         // Root is at 0x40
         let root = lib.node_at(0x40).unwrap();
@@ -882,9 +888,11 @@ mod tests {
 
     #[test]
     fn name_upper_correct() {
-        let data = build_test_hlib(&[
-            TestTopic { name: "MixedCase", body: "Body.", children: vec![] },
-        ]);
+        let data = build_test_hlib(&[TestTopic {
+            name: "MixedCase",
+            body: "Body.",
+            children: vec![],
+        }]);
         let lib = Library::from_bytes(data).unwrap();
         let node = lib.root().child(0).unwrap();
         assert_eq!(node.name(), "MixedCase");
@@ -893,9 +901,11 @@ mod tests {
 
     #[test]
     fn child_out_of_range_returns_none() {
-        let data = build_test_hlib(&[
-            TestTopic { name: "ONLY", body: "Only.", children: vec![] },
-        ]);
+        let data = build_test_hlib(&[TestTopic {
+            name: "ONLY",
+            body: "Only.",
+            children: vec![],
+        }]);
         let lib = Library::from_bytes(data).unwrap();
         let root = lib.root();
         assert_eq!(root.child_count(), 1);
@@ -907,9 +917,21 @@ mod tests {
     #[test]
     fn children_iterator() {
         let data = build_test_hlib(&[
-            TestTopic { name: "Bravo", body: "B.", children: vec![] },
-            TestTopic { name: "Alpha", body: "A.", children: vec![] },
-            TestTopic { name: "Charlie", body: "C.", children: vec![] },
+            TestTopic {
+                name: "Bravo",
+                body: "B.",
+                children: vec![],
+            },
+            TestTopic {
+                name: "Alpha",
+                body: "A.",
+                children: vec![],
+            },
+            TestTopic {
+                name: "Charlie",
+                body: "C.",
+                children: vec![],
+            },
         ]);
         let lib = Library::from_bytes(data).unwrap();
         let names: Vec<&str> = lib.root().children().map(|n| n.name()).collect();
@@ -919,9 +941,11 @@ mod tests {
 
     #[test]
     fn children_iterator_empty() {
-        let data = build_test_hlib(&[
-            TestTopic { name: "LEAF", body: "Leaf.", children: vec![] },
-        ]);
+        let data = build_test_hlib(&[TestTopic {
+            name: "LEAF",
+            body: "Leaf.",
+            children: vec![],
+        }]);
         let lib = Library::from_bytes(data).unwrap();
         let leaf = lib.root().child(0).unwrap();
         assert_eq!(leaf.child_count(), 0);
@@ -938,9 +962,11 @@ mod tests {
     #[test]
     fn body_with_special_characters() {
         let body = "  Line one.\n\n  Line three with\ttab.\n    Indented.";
-        let data = build_test_hlib(&[
-            TestTopic { name: "SPECIAL", body, children: vec![] },
-        ]);
+        let data = build_test_hlib(&[TestTopic {
+            name: "SPECIAL",
+            body,
+            children: vec![],
+        }]);
         let lib = Library::from_bytes(data).unwrap();
         let node = lib.root().child(0).unwrap();
         assert_eq!(node.body_text(), body);
@@ -956,19 +982,27 @@ mod tests {
                     TestTopic {
                         name: "/CONFIRM",
                         body: "Confirm help.",
-                        children: vec![
-                            TestTopic { name: "Examples", body: "Example text.", children: vec![] },
-                        ],
+                        children: vec![TestTopic {
+                            name: "Examples",
+                            body: "Example text.",
+                            children: vec![],
+                        }],
                     },
-                    TestTopic { name: "/LOG", body: "Log help.", children: vec![] },
+                    TestTopic {
+                        name: "/LOG",
+                        body: "Log help.",
+                        children: vec![],
+                    },
                 ],
             },
             TestTopic {
                 name: "DELETE",
                 body: "Delete help.",
-                children: vec![
-                    TestTopic { name: "/CONFIRM", body: "Delete confirm.", children: vec![] },
-                ],
+                children: vec![TestTopic {
+                    name: "/CONFIRM",
+                    body: "Delete confirm.",
+                    children: vec![],
+                }],
             },
         ]);
         let lib = Library::from_bytes(data).unwrap();
@@ -1018,9 +1052,11 @@ mod tests {
 
     #[test]
     fn noderef_debug_impl() {
-        let data = build_test_hlib(&[
-            TestTopic { name: "TEST", body: "Body.", children: vec![] },
-        ]);
+        let data = build_test_hlib(&[TestTopic {
+            name: "TEST",
+            body: "Body.",
+            children: vec![],
+        }]);
         let lib = Library::from_bytes(data).unwrap();
         let node = lib.root().child(0).unwrap();
         let debug = format!("{:?}", node);
@@ -1038,9 +1074,11 @@ mod tests {
 
     #[test]
     fn noderef_is_copy() {
-        let data = build_test_hlib(&[
-            TestTopic { name: "A", body: "A.", children: vec![] },
-        ]);
+        let data = build_test_hlib(&[TestTopic {
+            name: "A",
+            body: "A.",
+            children: vec![],
+        }]);
         let lib = Library::from_bytes(data).unwrap();
         let n1 = lib.root();
         let n2 = n1; // Copy
@@ -1124,7 +1162,11 @@ mod tests {
         let err = Library::from_bytes(data).unwrap_err();
         match err {
             LibraryError::InvalidFormat(msg) => {
-                assert!(msg.contains("file_size") || msg.contains("size"), "msg was: {}", msg);
+                assert!(
+                    msg.contains("file_size") || msg.contains("size"),
+                    "msg was: {}",
+                    msg
+                );
             }
             other => panic!("expected InvalidFormat, got: {:?}", other),
         }
@@ -1168,7 +1210,8 @@ mod tests {
             LibraryError::InvalidFormat(msg) => {
                 assert!(
                     msg.contains("text region") || msg.contains("overflow"),
-                    "msg was: {}", msg
+                    "msg was: {}",
+                    msg
                 );
             }
             other => panic!("expected InvalidFormat, got: {:?}", other),
@@ -1187,9 +1230,11 @@ mod tests {
 
     #[test]
     fn name_slice_points_into_backing() {
-        let data = build_test_hlib(&[
-            TestTopic { name: "VERIFY", body: "Body.", children: vec![] },
-        ]);
+        let data = build_test_hlib(&[TestTopic {
+            name: "VERIFY",
+            body: "Body.",
+            children: vec![],
+        }]);
         let lib = Library::from_bytes(data).unwrap();
         let node = lib.root().child(0).unwrap();
         let name = node.name();
@@ -1200,15 +1245,19 @@ mod tests {
         assert!(
             name_ptr >= backing_start && name_ptr < backing_end,
             "name pointer {:#x} not within backing range {:#x}..{:#x}",
-            name_ptr, backing_start, backing_end
+            name_ptr,
+            backing_start,
+            backing_end
         );
     }
 
     #[test]
     fn body_bytes_points_into_backing() {
-        let data = build_test_hlib(&[
-            TestTopic { name: "VERIFY", body: "Some body text here.", children: vec![] },
-        ]);
+        let data = build_test_hlib(&[TestTopic {
+            name: "VERIFY",
+            body: "Some body text here.",
+            children: vec![],
+        }]);
         let lib = Library::from_bytes(data).unwrap();
         let node = lib.root().child(0).unwrap();
         let body = node.body_bytes();
@@ -1220,7 +1269,9 @@ mod tests {
         assert!(
             body_ptr >= backing_start && body_ptr < backing_end,
             "body pointer {:#x} not within backing range {:#x}..{:#x}",
-            body_ptr, backing_start, backing_end
+            body_ptr,
+            backing_start,
+            backing_end
         );
     }
 
@@ -1259,10 +1310,7 @@ mod tests {
 
     #[test]
     fn library_error_source_trait() {
-        let io_err = LibraryError::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "test",
-        ));
+        let io_err = LibraryError::Io(std::io::Error::other("test"));
         assert!(std::error::Error::source(&io_err).is_some());
 
         let fmt_err = LibraryError::InvalidFormat("test".to_string());
@@ -1277,7 +1325,7 @@ mod tests {
 
     #[test]
     fn library_error_from_io() {
-        let io_err = std::io::Error::new(std::io::ErrorKind::Other, "converted");
+        let io_err = std::io::Error::other("converted");
         let lib_err: LibraryError = io_err.into();
         match lib_err {
             LibraryError::Io(e) => assert!(e.to_string().contains("converted")),
@@ -1290,9 +1338,11 @@ mod tests {
     #[cfg(feature = "mmap")]
     #[test]
     fn open_valid_library_from_file() {
-        let data = build_test_hlib(&[
-            TestTopic { name: "FILE_TEST", body: "From file.", children: vec![] },
-        ]);
+        let data = build_test_hlib(&[TestTopic {
+            name: "FILE_TEST",
+            body: "From file.",
+            children: vec![],
+        }]);
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::io::Write::write_all(&mut std::io::BufWriter::new(tmp.as_file()), &data).unwrap();
         let lib = Library::open(tmp.path()).unwrap();
@@ -1345,17 +1395,27 @@ mod tests {
 
     #[test]
     fn slash_prefixed_qualifier_names() {
-        let data = build_test_hlib(&[
-            TestTopic {
-                name: "SET",
-                body: "Set help.",
-                children: vec![
-                    TestTopic { name: "/LOG", body: "Log.", children: vec![] },
-                    TestTopic { name: "/OUTPUT", body: "Output.", children: vec![] },
-                    TestTopic { name: "DEFAULT", body: "Default.", children: vec![] },
-                ],
-            },
-        ]);
+        let data = build_test_hlib(&[TestTopic {
+            name: "SET",
+            body: "Set help.",
+            children: vec![
+                TestTopic {
+                    name: "/LOG",
+                    body: "Log.",
+                    children: vec![],
+                },
+                TestTopic {
+                    name: "/OUTPUT",
+                    body: "Output.",
+                    children: vec![],
+                },
+                TestTopic {
+                    name: "DEFAULT",
+                    body: "Default.",
+                    children: vec![],
+                },
+            ],
+        }]);
         let lib = Library::from_bytes(data).unwrap();
         let set = lib.root().child(0).unwrap();
         assert_eq!(set.child_count(), 3);
@@ -1369,8 +1429,16 @@ mod tests {
     #[test]
     fn node_count_includes_root() {
         let data = build_test_hlib(&[
-            TestTopic { name: "A", body: ".", children: vec![] },
-            TestTopic { name: "B", body: ".", children: vec![] },
+            TestTopic {
+                name: "A",
+                body: ".",
+                children: vec![],
+            },
+            TestTopic {
+                name: "B",
+                body: ".",
+                children: vec![],
+            },
         ]);
         let lib = Library::from_bytes(data).unwrap();
         // 1 root + 2 topics = 3
@@ -1379,15 +1447,15 @@ mod tests {
 
     #[test]
     fn file_size_field_matches_data_length() {
-        let data = build_test_hlib(&[
-            TestTopic {
-                name: "TOPIC",
-                body: "Some text.",
-                children: vec![
-                    TestTopic { name: "SUB", body: "Sub text.", children: vec![] },
-                ],
-            },
-        ]);
+        let data = build_test_hlib(&[TestTopic {
+            name: "TOPIC",
+            body: "Some text.",
+            children: vec![TestTopic {
+                name: "SUB",
+                body: "Sub text.",
+                children: vec![],
+            }],
+        }]);
         let len = data.len();
         let lib = Library::from_bytes(data).unwrap();
         assert_eq!(lib.header().file_size as usize, len);
@@ -1399,13 +1467,11 @@ mod tests {
     fn maximum_name_length_31() {
         let name = "ABCDEFGHIJKLMNOPQRSTUVWXYZ12345"; // 31 chars
         assert_eq!(name.len(), 31);
-        let data = build_test_hlib(&[
-            TestTopic {
-                name: Box::leak(name.to_string().into_boxed_str()),
-                body: "Body.",
-                children: vec![],
-            },
-        ]);
+        let data = build_test_hlib(&[TestTopic {
+            name: Box::leak(name.to_string().into_boxed_str()),
+            body: "Body.",
+            children: vec![],
+        }]);
         let lib = Library::from_bytes(data).unwrap();
         let node = lib.root().child(0).unwrap();
         assert_eq!(node.name(), name);
@@ -1414,8 +1480,16 @@ mod tests {
     #[test]
     fn name_with_special_chars() {
         let data = build_test_hlib(&[
-            TestTopic { name: "SYS$HELP", body: ".", children: vec![] },
-            TestTopic { name: "MY_TOPIC-V2", body: ".", children: vec![] },
+            TestTopic {
+                name: "SYS$HELP",
+                body: ".",
+                children: vec![],
+            },
+            TestTopic {
+                name: "MY_TOPIC-V2",
+                body: ".",
+                children: vec![],
+            },
         ]);
         let lib = Library::from_bytes(data).unwrap();
         let names: Vec<&str> = lib.root().children().map(|n| n.name()).collect();
@@ -1426,27 +1500,23 @@ mod tests {
     #[test]
     fn deeply_nested_tree() {
         // Build a 4-level deep tree
-        let data = build_test_hlib(&[
-            TestTopic {
-                name: "L1",
-                body: "Level 1.",
-                children: vec![
-                    TestTopic {
-                        name: "L2",
-                        body: "Level 2.",
-                        children: vec![
-                            TestTopic {
-                                name: "L3",
-                                body: "Level 3.",
-                                children: vec![
-                                    TestTopic { name: "L4", body: "Level 4.", children: vec![] },
-                                ],
-                            },
-                        ],
-                    },
-                ],
-            },
-        ]);
+        let data = build_test_hlib(&[TestTopic {
+            name: "L1",
+            body: "Level 1.",
+            children: vec![TestTopic {
+                name: "L2",
+                body: "Level 2.",
+                children: vec![TestTopic {
+                    name: "L3",
+                    body: "Level 3.",
+                    children: vec![TestTopic {
+                        name: "L4",
+                        body: "Level 4.",
+                        children: vec![],
+                    }],
+                }],
+            }],
+        }]);
         let lib = Library::from_bytes(data).unwrap();
         let l1 = lib.root().child(0).unwrap();
         assert_eq!(l1.name(), "L1");
@@ -1488,13 +1558,11 @@ mod tests {
         let large_body: String = (0..100)
             .map(|i| format!("  Line number {} of the help text.\n", i))
             .collect();
-        let data = build_test_hlib(&[
-            TestTopic {
-                name: "BIG",
-                body: Box::leak(large_body.clone().into_boxed_str()),
-                children: vec![],
-            },
-        ]);
+        let data = build_test_hlib(&[TestTopic {
+            name: "BIG",
+            body: Box::leak(large_body.clone().into_boxed_str()),
+            children: vec![],
+        }]);
         let lib = Library::from_bytes(data).unwrap();
         let node = lib.root().child(0).unwrap();
         assert_eq!(node.body_text(), large_body.as_str());
@@ -1595,7 +1663,8 @@ mod tests {
             LibraryError::InvalidFormat(msg) => {
                 assert!(
                     msg.contains("text region") || msg.contains("overflow"),
-                    "msg was: {}", msg
+                    "msg was: {}",
+                    msg
                 );
             }
             other => panic!("expected InvalidFormat, got: {:?}", other),
@@ -1607,9 +1676,11 @@ mod tests {
 
     #[test]
     fn roundtrip_single_topic() {
-        let data = build_test_hlib(&[
-            TestTopic { name: "COPY", body: "Creates a copy of a file.", children: vec![] },
-        ]);
+        let data = build_test_hlib(&[TestTopic {
+            name: "COPY",
+            body: "Creates a copy of a file.",
+            children: vec![],
+        }]);
         let lib = Library::from_bytes(data).unwrap();
         let root = lib.root();
         assert_eq!(root.child_count(), 1);
@@ -1622,21 +1693,19 @@ mod tests {
 
     #[test]
     fn roundtrip_nested_three_levels() {
-        let data = build_test_hlib(&[
-            TestTopic {
-                name: "COPY",
-                body: "Copy help.",
-                children: vec![
-                    TestTopic {
-                        name: "/CONFIRM",
-                        body: "Confirm.",
-                        children: vec![
-                            TestTopic { name: "Examples", body: "Ex.", children: vec![] },
-                        ],
-                    },
-                ],
-            },
-        ]);
+        let data = build_test_hlib(&[TestTopic {
+            name: "COPY",
+            body: "Copy help.",
+            children: vec![TestTopic {
+                name: "/CONFIRM",
+                body: "Confirm.",
+                children: vec![TestTopic {
+                    name: "Examples",
+                    body: "Ex.",
+                    children: vec![],
+                }],
+            }],
+        }]);
         let lib = Library::from_bytes(data).unwrap();
         let copy = lib.root().child(0).unwrap();
         let confirm = copy.child(0).unwrap();
@@ -1650,15 +1719,15 @@ mod tests {
 
     #[test]
     fn roundtrip_empty_body() {
-        let data = build_test_hlib(&[
-            TestTopic {
-                name: "CONTAINER",
-                body: "",
-                children: vec![
-                    TestTopic { name: "CHILD", body: "Has body.", children: vec![] },
-                ],
-            },
-        ]);
+        let data = build_test_hlib(&[TestTopic {
+            name: "CONTAINER",
+            body: "",
+            children: vec![TestTopic {
+                name: "CHILD",
+                body: "Has body.",
+                children: vec![],
+            }],
+        }]);
         let lib = Library::from_bytes(data).unwrap();
         let container = lib.root().child(0).unwrap();
         assert_eq!(container.body_text(), "");
@@ -1668,9 +1737,11 @@ mod tests {
     #[test]
     fn roundtrip_body_with_special_chars() {
         let body = "  First line.\n\n  Third line with\ttab.\n    Deep indent.";
-        let data = build_test_hlib(&[
-            TestTopic { name: "TOPIC", body, children: vec![] },
-        ]);
+        let data = build_test_hlib(&[TestTopic {
+            name: "TOPIC",
+            body,
+            children: vec![],
+        }]);
         let lib = Library::from_bytes(data).unwrap();
         let node = lib.root().child(0).unwrap();
         assert_eq!(node.body_text(), body);
@@ -1683,13 +1754,11 @@ mod tests {
             .map(|i| TestTopic {
                 name: Box::leak(format!("TOPIC_{:03}", i).into_boxed_str()),
                 body: Box::leak(format!("Body {}.", i).into_boxed_str()),
-                children: vec![
-                    TestTopic {
-                        name: Box::leak(format!("SUB_A_{:03}", i).into_boxed_str()),
-                        body: Box::leak(format!("Sub A of {}.", i).into_boxed_str()),
-                        children: vec![],
-                    },
-                ],
+                children: vec![TestTopic {
+                    name: Box::leak(format!("SUB_A_{:03}", i).into_boxed_str()),
+                    body: Box::leak(format!("Sub A of {}.", i).into_boxed_str()),
+                    children: vec![],
+                }],
             })
             .collect();
         let data = build_test_hlib(&topics);

@@ -863,7 +863,14 @@ mod tests {
 
     #[test]
     fn man_page_exists_for_ls() {
-        // ls should exist on any Linux system
+        // Skip if `man` is not installed (e.g. cross-compilation containers)
+        if std::process::Command::new("man")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
         let result = man_page_exists("ls");
         assert!(result.is_some());
         assert_eq!(result.unwrap(), "1");

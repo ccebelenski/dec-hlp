@@ -1555,9 +1555,11 @@ mod tests {
 
     #[test]
     fn large_body_text() {
-        let large_body: String = (0..100)
-            .map(|i| format!("  Line number {} of the help text.\n", i))
-            .collect();
+        let mut large_body = String::new();
+        for i in 0..100 {
+            use std::fmt::Write;
+            writeln!(large_body, "  Line number {i} of the help text.").unwrap();
+        }
         let data = build_test_hlib(&[TestTopic {
             name: "BIG",
             body: Box::leak(large_body.clone().into_boxed_str()),

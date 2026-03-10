@@ -105,7 +105,7 @@ pub fn is_wildcard(input: &str) -> bool {
 }
 
 /// Enumerate the display names of all children of a node, sorted alphabetically.
-pub fn child_names<'lib>(node: NodeRef<'lib>) -> Vec<&'lib str> {
+pub fn child_names(node: NodeRef<'_>) -> Vec<&str> {
     node.children().map(|c| c.name()).collect()
 }
 
@@ -595,7 +595,7 @@ impl Default for LibrarySet {
     }
 }
 
-impl<'lib> ResolveResult<'lib> {
+impl ResolveResult<'_> {
     /// Adjust the depth fields by adding an offset. Used when composing
     /// resolve results from sub-paths.
     fn adjust_depth(self, offset: usize) -> Self {

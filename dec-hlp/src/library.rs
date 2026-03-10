@@ -313,7 +313,7 @@ pub struct NodeRef<'lib> {
     offset: u32,
 }
 
-impl<'lib> fmt::Debug for NodeRef<'lib> {
+impl fmt::Debug for NodeRef<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("NodeRef")
             .field("offset", &self.offset)

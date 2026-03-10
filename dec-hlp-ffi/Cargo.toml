@@ -5,6 +5,7 @@ edition = "2024"
 rust-version = "1.85.0"
 license = "MIT"
 description = "C-compatible FFI bindings for the dec-hlp VMS help library"
+repository = "https://github.com/ccebelenski/dec-hlp"
 publish = false
 
 [lib]

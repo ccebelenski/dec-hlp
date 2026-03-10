@@ -5,6 +5,9 @@ edition = "2024"
 rust-version = "1.85.0"
 description = "A Linux reimplementation of the VMS HELP utility library"
 license = "MIT"
+repository = "https://github.com/ccebelenski/dec-hlp"
+homepage = "https://github.com/ccebelenski/dec-hlp"
+readme = "../README.md"
 keywords = ["vms", "help", "hlb", "dec", "cli"]
 categories = ["command-line-utilities", "parser-implementations"]
 

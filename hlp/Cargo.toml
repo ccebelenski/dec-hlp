@@ -3,8 +3,13 @@ name = "hlp"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85.0"
-description = "VMS HELP utility for Linux"
+description = "VMS HELP utility for Linux — interactive topic browser with man page fallback"
 license = "MIT"
+repository = "https://github.com/ccebelenski/dec-hlp"
+homepage = "https://github.com/ccebelenski/dec-hlp"
+readme = "../README.md"
+keywords = ["vms", "help", "hlp", "cli", "man"]
+categories = ["command-line-utilities"]
 
 [[bin]]
 name = "hlp"

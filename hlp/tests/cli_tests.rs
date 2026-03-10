@@ -232,14 +232,15 @@ fn cli_exact_flag() {
 
 #[test]
 fn cli_no_library_found() {
+    // Use a topic that won't match any man page so man fallback doesn't mask the error
     Command::cargo_bin("hlp")
         .unwrap()
         .env("HLP_LIBRARY_PATH", "/nonexistent")
         .env("HOME", "/nonexistent")
         .env_remove("HLP_LIBRARY")
-        .args(["--no-prompt", "test"])
+        .args(["--no-prompt", "zzz_nonexistent_topic_xyzzy"])
         .assert()
-        .code(4)
+        .code(1) // NOT_FOUND (man fallback also fails)
         .stderr(predicate::str::contains("no help libraries found"));
 }
 

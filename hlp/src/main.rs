@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process;
@@ -174,9 +175,16 @@ fn run_browse(cli: &Cli) -> i32 {
         engine::MatchMode::Abbreviation
     };
 
-    // Load libraries
+    // Load seen pages cache
+    let mut seen = SeenPages::load();
+
+    // Load libraries (allow empty if we have man fallback)
     let lib_set = match load_libraries(cli) {
         Ok(set) => set,
+        Err(EXIT_NO_LIBRARY) => {
+            // No .hlib libraries found — that's OK, we can still fall back to man
+            engine::LibrarySet::new()
+        }
         Err(code) => return code,
     };
 
@@ -200,7 +208,6 @@ fn run_browse(cli: &Cli) -> i32 {
         match lib_set.resolve(&path_refs, match_mode) {
             engine::ResolveResult::Found(node) => {
                 if !no_pager {
-                    // Collect output then page it
                     let text = format_topic_output(&node, &lib_set);
                     page_output(&text, cli);
                 } else {
@@ -211,8 +218,7 @@ fn run_browse(cli: &Cli) -> i32 {
                     return EXIT_SUCCESS;
                 }
 
-                // Enter interactive mode at this node's level
-                return run_interactive(cli, &lib_set, Some(node), match_mode, no_pager);
+                return run_interactive(cli, &lib_set, Some(node), match_mode, no_pager, &mut seen);
             }
             engine::ResolveResult::AmbiguousAt {
                 input, candidates, ..
@@ -227,11 +233,21 @@ fn run_browse(cli: &Cli) -> i32 {
                 if no_prompt {
                     return EXIT_NOT_FOUND;
                 }
-                return run_interactive(cli, &lib_set, None, match_mode, no_pager);
+                return run_interactive(cli, &lib_set, None, match_mode, no_pager, &mut seen);
             }
             engine::ResolveResult::NotFoundAt {
-                input, available, ..
+                depth, input, available, ..
             } => {
+                // Man page fallback: only at root level (depth 0), single topic
+                if depth == 0 && path_refs.len() == 1 {
+                    if try_man_fallback(&input, no_pager, &mut seen) {
+                        if no_prompt {
+                            return EXIT_SUCCESS;
+                        }
+                        return run_interactive(cli, &lib_set, None, match_mode, no_pager, &mut seen);
+                    }
+                }
+
                 eprintln!();
                 eprintln!("  Sorry, no documentation on {}", input.to_ascii_uppercase());
                 eprintln!();
@@ -246,22 +262,35 @@ fn run_browse(cli: &Cli) -> i32 {
                 if no_prompt {
                     return EXIT_NOT_FOUND;
                 }
-                return run_interactive(cli, &lib_set, None, match_mode, no_pager);
+                return run_interactive(cli, &lib_set, None, match_mode, no_pager, &mut seen);
             }
         }
     }
 
     // No topics on command line
     if no_prompt {
-        // Show all available topics
-        let names = lib_set.root_topic_names();
+        // Show all available topics (including seen man pages)
+        let mut names: Vec<String> = lib_set
+            .root_topic_names()
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect();
+        // Add seen man pages that aren't already in lib topics
+        for seen_name in seen.names() {
+            if !names.iter().any(|n| n.eq_ignore_ascii_case(seen_name)) {
+                names.push(seen_name.to_string());
+            }
+        }
+        names.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
+
         if names.is_empty() {
             return EXIT_SUCCESS;
         }
+        let name_refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
         let _ = writeln!(output);
         let _ = writeln!(output, "  Information available:");
         let _ = writeln!(output);
-        let formatted = engine::format_columns(&names, 76);
+        let formatted = engine::format_columns(&name_refs, 76);
         for line in formatted.lines() {
             let _ = writeln!(output, "  {}", line);
         }
@@ -270,7 +299,7 @@ fn run_browse(cli: &Cli) -> i32 {
     }
 
     // Interactive mode from root
-    run_interactive(cli, &lib_set, None, match_mode, no_pager)
+    run_interactive(cli, &lib_set, None, match_mode, no_pager, &mut seen)
 }
 
 // ─── Library loading ─────────────────────────────────────────────────────────
@@ -359,6 +388,7 @@ fn run_interactive(
     start_node: Option<library::NodeRef<'_>>,
     match_mode: engine::MatchMode,
     no_pager: bool,
+    seen: &mut SeenPages,
 ) -> i32 {
     // We need a navigator. Since LibrarySet doesn't directly provide one,
     // we'll manage the interactive loop manually using lib_set.resolve
@@ -385,12 +415,24 @@ fn run_interactive(
 
     // Show intro if at root and no --no-intro
     if path_stack.is_empty() && !cli.no_intro {
-        let names = lib_set.root_topic_names();
+        let mut names: Vec<String> = lib_set
+            .root_topic_names()
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect();
+        // Include seen man pages
+        for seen_name in seen.names() {
+            if !names.iter().any(|n| n.eq_ignore_ascii_case(seen_name)) {
+                names.push(seen_name.to_string());
+            }
+        }
+        names.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
         if !names.is_empty() {
             eprintln!();
             eprintln!("  Information available:");
             eprintln!();
-            let formatted = engine::format_columns(&names, 76);
+            let name_refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+            let formatted = engine::format_columns(&name_refs, 76);
             for line in formatted.lines() {
                 eprintln!("  {}", line);
             }
@@ -444,15 +486,25 @@ fn run_interactive(
 
         // Question mark: show topics at current level
         if trimmed == "?" {
-            let names = if let Some(node) = current_lib_and_node {
-                engine::child_names(node)
+            let mut names: Vec<String> = if let Some(node) = current_lib_and_node {
+                engine::child_names(node).into_iter().map(|s| s.to_string()).collect()
             } else {
-                lib_set.root_topic_names()
+                lib_set.root_topic_names().into_iter().map(|s| s.to_string()).collect()
             };
+            // At root level, include seen man pages
+            if path_stack.is_empty() {
+                for seen_name in seen.names() {
+                    if !names.iter().any(|n| n.eq_ignore_ascii_case(seen_name)) {
+                        names.push(seen_name.to_string());
+                    }
+                }
+                names.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
+            }
 
             if !names.is_empty() {
                 eprintln!();
-                let formatted = engine::format_columns(&names, 76);
+                let name_refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+                let formatted = engine::format_columns(&name_refs, 76);
                 for line in formatted.lines() {
                     eprintln!("  {}", line);
                 }
@@ -511,6 +563,11 @@ fn run_interactive(
             engine::ResolveResult::NotFoundAt {
                 input, available, ..
             } => {
+                // Man fallback at root level
+                if path_stack.is_empty() && try_man_fallback(trimmed, no_pager, seen) {
+                    continue;
+                }
+
                 eprintln!();
                 eprintln!("  Sorry, no documentation on {}", input.to_ascii_uppercase());
                 eprintln!();
@@ -562,6 +619,157 @@ fn format_topic_output(node: &library::NodeRef<'_>, _lib_set: &engine::LibrarySe
 
 // ─── Pager ───────────────────────────────────────────────────────────────────
 
+// ─── Man page fallback ───────────────────────────────────────────────────────
+
+/// Check if a man page exists for the given topic. Returns the section if found.
+fn man_page_exists(topic: &str) -> Option<String> {
+    let output = process::Command::new("man")
+        .args(["-w", topic])
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::null())
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    // Extract section from the path, e.g. /usr/share/man/man1/ls.1.gz -> "1"
+    let path = String::from_utf8_lossy(&output.stdout);
+    let path = path.trim();
+    // Look for /manN/ in the path
+    if let Some(pos) = path.rfind("/man") {
+        let after = &path[pos + 4..];
+        if let Some(end) = after.find('/') {
+            let section = &after[..end];
+            return Some(section.to_string());
+        }
+    }
+    // Fallback: try to get section from filename like ls.1.gz
+    if let Some(basename) = path.rsplit('/').next() {
+        // Strip .gz, .bz2, etc.
+        let name = basename
+            .strip_suffix(".gz")
+            .or_else(|| basename.strip_suffix(".bz2"))
+            .or_else(|| basename.strip_suffix(".xz"))
+            .unwrap_or(basename);
+        // Section is after the last dot: ls.1 -> 1
+        if let Some(dot_pos) = name.rfind('.') {
+            let section = &name[dot_pos + 1..];
+            if !section.is_empty() && section.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+                return Some(section.to_string());
+            }
+        }
+    }
+    Some("1".to_string()) // default section
+}
+
+/// Display a man page, returning true if it was shown.
+fn display_man_page(topic: &str, no_pager: bool) -> bool {
+    let mut cmd = process::Command::new("man");
+    if no_pager {
+        // Use cat as the pager to get plain text
+        cmd.env("MANPAGER", "cat");
+        cmd.env("PAGER", "cat");
+    }
+    cmd.arg(topic);
+    match cmd.status() {
+        Ok(status) => status.success(),
+        Err(_) => false,
+    }
+}
+
+/// Try man page fallback for a topic not found in .hlib libraries.
+/// Returns true if a man page was displayed.
+fn try_man_fallback(topic: &str, no_pager: bool, seen: &mut SeenPages) -> bool {
+    if let Some(section) = man_page_exists(topic) {
+        if display_man_page(topic, no_pager) {
+            seen.add(topic, &section);
+            seen.save();
+            return true;
+        }
+    }
+    false
+}
+
+// ─── Seen pages cache ────────────────────────────────────────────────────────
+
+/// Lightweight cache of previously viewed man pages.
+/// Stored as simple `name: section` YAML in ~/.config/hlp/seen.yaml
+struct SeenPages {
+    entries: BTreeMap<String, String>,
+    path: Option<PathBuf>,
+}
+
+impl SeenPages {
+    /// Load seen pages from ~/.config/hlp/seen.yaml
+    fn load() -> Self {
+        let path = Self::config_path();
+        let entries = path
+            .as_ref()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .map(|content| Self::parse(&content))
+            .unwrap_or_default();
+        SeenPages { entries, path }
+    }
+
+    /// Parse simple `key: value` YAML lines
+    fn parse(content: &str) -> BTreeMap<String, String> {
+        let mut map = BTreeMap::new();
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if let Some((key, value)) = line.split_once(':') {
+                let key = key.trim().to_string();
+                let value = value.trim().trim_matches('"').to_string();
+                if !key.is_empty() && !value.is_empty() {
+                    map.insert(key, value);
+                }
+            }
+        }
+        map
+    }
+
+    /// Get the config file path
+    fn config_path() -> Option<PathBuf> {
+        let home = std::env::var("HOME").ok()?;
+        Some(PathBuf::from(format!("{}/.config/hlp/seen.yaml", home)))
+    }
+
+    /// Record a viewed man page
+    fn add(&mut self, name: &str, section: &str) {
+        self.entries
+            .insert(name.to_lowercase(), section.to_string());
+    }
+
+    /// Save to disk (best-effort, errors silently ignored)
+    fn save(&self) {
+        let Some(ref path) = self.path else { return };
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let mut content = String::from("# Man pages previously viewed via hlp\n");
+        for (name, section) in &self.entries {
+            content.push_str(&format!("{}: \"{}\"\n", name, section));
+        }
+        let _ = std::fs::write(path, content);
+    }
+
+    /// Get sorted list of seen page names (for display in topic listings)
+    fn names(&self) -> Vec<&str> {
+        self.entries.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// Check if a topic was previously seen as a man page
+    fn contains(&self, topic: &str) -> bool {
+        self.entries.contains_key(&topic.to_lowercase())
+    }
+}
+
+// ─── Pager ───────────────────────────────────────────────────────────────────
+
 fn page_output(text: &str, cli: &Cli) {
     let env_pager = std::env::var("PAGER").ok();
     let pager = cli
@@ -590,5 +798,73 @@ fn page_output(text: &str, cli: &Cli) {
             // Fallback: print directly
             print!("{}", text);
         }
+    }
+}
+
+// ─── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn seen_pages_parse_empty() {
+        let entries = SeenPages::parse("");
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn seen_pages_parse_entries() {
+        let content = "ls: \"1\"\ngrep: \"1\"\nbash: \"1\"\n";
+        let entries = SeenPages::parse(content);
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries["ls"], "1");
+        assert_eq!(entries["grep"], "1");
+        assert_eq!(entries["bash"], "1");
+    }
+
+    #[test]
+    fn seen_pages_parse_comments_and_blanks() {
+        let content = "# Comment\n\nls: \"1\"\n  # Another comment\ngrep: \"1\"\n";
+        let entries = SeenPages::parse(content);
+        assert_eq!(entries.len(), 2);
+    }
+
+    #[test]
+    fn seen_pages_add_and_names() {
+        let mut seen = SeenPages {
+            entries: BTreeMap::new(),
+            path: None,
+        };
+        seen.add("LS", "1");
+        seen.add("grep", "1");
+        assert_eq!(seen.names(), vec!["grep", "ls"]); // BTreeMap sorts, lowercased
+    }
+
+    #[test]
+    fn seen_pages_contains_case_insensitive() {
+        let mut seen = SeenPages {
+            entries: BTreeMap::new(),
+            path: None,
+        };
+        seen.add("ls", "1");
+        assert!(seen.contains("ls"));
+        assert!(seen.contains("LS"));
+        assert!(seen.contains("Ls"));
+        assert!(!seen.contains("cat"));
+    }
+
+    #[test]
+    fn man_page_exists_for_ls() {
+        // ls should exist on any Linux system
+        let result = man_page_exists("ls");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), "1");
+    }
+
+    #[test]
+    fn man_page_not_exists() {
+        let result = man_page_exists("zzz_nonexistent_command_xyzzy");
+        assert!(result.is_none());
     }
 }
